@@ -1,9 +1,10 @@
 # Rupee Rails
 
-A two-tier retail CBDC sandbox modelled on India's e₹ (Digital Rupee): a central-bank core
-ledger, banks that distribute wallets, programmable money for subsidies, and offline payments
-with double-spend detection. TypeScript, no external services, `npm test` and `npm run demo`
-tell the whole story.
+A working model of India's Digital Rupee (e₹): a central-bank core ledger, banks that
+distribute wallets, programmable money for subsidies, offline payments with double-spend
+detection, durable journals in SQLite or PostgreSQL, a C++ secure element for the device
+side, and the same token rules as Hyperledger Fabric chaincode in Go. No external services
+needed; `npm test` and `npm run demo` tell the whole story.
 
 ```
 $ npm run demo
@@ -20,7 +21,9 @@ $ npm run demo
     first to sync:  {"ok":true,"txId":"tx_…"}
     second to sync: {"ok":false,"code":"DOUBLE_SPEND","message":"voucher vch_… reuses counter 2 of vch_…"}
     Ravi's wallet frozen: true
-11. Done: ledger entries 14, hash chain intact, conservation holds
+11. Reopened the ledger from its SQLite journal
+    25 events replayed into 14 entries; chain head c2c098dadf5e0223… matches the live ledger
+12. Done: ledger entries 14, hash chain intact, conservation holds
 ```
 
 ## Why this exists
@@ -33,7 +36,7 @@ transfers between devices, which was one of the three HaRBInger 2025 problem sta
 
 This repository is a working model of all of that, small enough to read in an afternoon and
 tested well enough to argue with. It is a sandbox, not a product; the limitations section says
-exactly where it stops.
+exactly where it stops. New to the vocabulary? Start with [docs/glossary.md](docs/glossary.md).
 
 ## Architecture
 
@@ -41,6 +44,9 @@ exactly where it stops.
 flowchart LR
   subgraph tier1 [Tier 1: central bank]
     L[CoreLedger<br/>UTXO tokens, mint/issue/burn,<br/>hash-chained log, idempotency,<br/>rules enforcement, directory]
+    J[(Journal<br/>SQLite / PostgreSQL)]
+    L -- write-ahead --> J
+    J -- replay on open --> L
   end
   subgraph tier2a [Tier 2: bank-a]
     A[BankTier<br/>wallets, KYC caps,<br/>load/unload, P2P/P2M,<br/>disburse, voucher settlement]
@@ -49,8 +55,11 @@ flowchart LR
     B[BankTier]
   end
   subgraph devices [Devices]
-    D1[OfflineWallet<br/>signed vouchers,<br/>monotonic counter]
-    D2[OfflineWallet]
+    D1[Secure element (C++)<br/>key + monotonic counter<br/>signs vouchers]
+    D2[OfflineWallet (TS)]
+  end
+  subgraph fabric [Alternative core]
+    C[erupee-utxo chaincode (Go)<br/>same rules on Hyperledger Fabric]
   end
   A -- CoreClient (in-process or HTTP) --> L
   B -- CoreClient --> L
@@ -67,25 +76,31 @@ flowchart LR
 | KYC-tiered wallet limits | `KYC_LIMITS`, `BankTier.load/payP2P/payQr` | Minimum-KYC wallets have a balance cap and a daily outgoing cap; full-KYC wallets have higher ones. |
 | Interoperability with UPI QR | `src/upi.ts`, `BankTier.payQr` | Standard `upi://pay?pa=…&am=…&mc=…` codes are parsed and paid from an e₹ wallet. |
 | Programmable money (purpose-bound DBT) | `src/rules.ts`, `CoreLedger.transfer`, `BankTier.disburse` | Tokens carry MCC allowlists, expiry and a geofence. The core rejects non-qualifying spends, change inherits the rules, a qualifying merchant receives ordinary e₹, and expired tokens are swept back to the scheme. |
-| Offline payments | `src/offline.ts`, `BankTier.prefundOffline/syncVouchers` | Devices issue Ed25519-signed vouchers with a strictly increasing counter against a pre-funded escrow. Banks settle on sync and detect double-spends. |
-| Tamper-evident record | `CoreLedger.entries`, `verifyChain` | Every accepted operation is hash-linked to the previous one. |
+| Offline payments | `src/offline.ts`, `native/secure-element`, `BankTier.prefundOffline/syncVouchers` | Devices issue Ed25519-signed vouchers with a strictly increasing counter against a pre-funded escrow. Banks settle on sync and detect double-spends. |
+| Secure element | `native/secure-element` (C++17) | Holds the key and counter, signs vouchers over a canonical payload byte-compatible with the TypeScript side. Cross-language contract test in `test/secure-element.test.ts`. |
+| Durable, replayable record | `src/journal.ts`, `CoreLedger.open` | Write-ahead journal in memory, SQLite (`node:sqlite`) or PostgreSQL (`pg`); the ledger is a projection and rebuilds itself on open. |
+| Tamper-evident log | `CoreLedger.entries`, `verifyChain` | Every accepted operation is hash-linked to the previous one. |
+| Permissioned DLT core | `chaincode/erupee-utxo` (Go) | The same UTXO token, rules and conservation check as Hyperledger Fabric chaincode, identity from X.509 membership. |
 | Audit trail | `BankTier.auditLog` | Every bank action records actor, request id, before/after balances and outcome, including rejections. |
-| Settlement finality and conservation | `CoreLedger.invariants` | `sum(unspent) == minted - burned`, checked in every test and after every demo step. |
+| Settlement finality and conservation | `CoreLedger.invariants`, `Supply()` in chaincode | `sum(unspent) == minted - burned`, checked in every test and after every demo step. |
 
 ## Run it
 
 ```sh
 npm install
-npm test          # 36 tests incl. property-based runs (vitest + fast-check)
-npm run demo      # the scenario above, in process
+npm test            # 47 tests incl. property-based runs; the PostgreSQL case needs DATABASE_URL
+npm run demo        # the scenario above, in process, ending with a replay from SQLite
 npm run typecheck
+
+npm run build:native && npm run test:native      # C++ secure element (g++ or clang; CMake in CI)
+cd chaincode/erupee-utxo && go test ./...        # Fabric chaincode (Go 1.25+)
 ```
 
-Two-process mode, the bank talking to the core over HTTP:
+Two-process mode, the bank talking to the core over HTTP, with a durable journal:
 
 ```sh
-npm run dev:core                              # core on :4000 (set ADMIN_TOKEN to guard /admin)
-BANK_ID=bank-a PORT=4001 npm run dev:bank     # boots, gets a ₹5,00,000 float from the RBI desk
+LEDGER_JOURNAL=./ledger.sqlite npm run dev:core     # or LEDGER_JOURNAL=postgres://user:pass@host/db
+BANK_ID=bank-a PORT=4001 npm run dev:bank           # boots, gets a ₹5,00,000 float from the RBI desk
 BANK_ID=bank-b PORT=4002 npm run dev:bank
 
 curl -s -X POST localhost:4001/wallets -H 'content-type: application/json' \
@@ -94,6 +109,18 @@ curl -s -X POST localhost:4001/wallets/bank-a:asha-patil/load -H 'content-type: 
   -d '{"amount":200000,"requestId":"load-1"}'
 curl -s localhost:4001/wallets/bank-a:asha-patil
 curl -s localhost:4000/invariants
+```
+
+Restart the core and it replays the journal: same tokens, same balances, same chain head.
+
+Drive the C++ secure element by hand:
+
+```sh
+SE=native/secure-element/build/cbdc-se
+$SE init   --state ravi.json --wallet bank-b:ravi
+$SE fund   --state ravi.json --amount 30000
+$SE create --state ravi.json --to bank-a:dealer --amount 10000 --at 2026-09-03T09:00:00.000Z
+$SE verify --voucher '{"id":"vch_…", ...}'
 ```
 
 ## Design notes
@@ -105,17 +132,26 @@ change handling, which `outputsFor` and `denominate` deal with.
 
 **Signatures and custody.** Wallet keys are Ed25519. In this sandbox the bank is custodial and
 signs on the customer's behalf; the same `TransferRequest` shape works unchanged if the key
-moves to the customer's device. The RBI key is the only one that can mint, burn or issue.
+moves to the customer's device, which is exactly what the secure element does for vouchers.
+The RBI key is the only one that can mint, burn or issue.
 
 **Idempotency, because banks retry.** Every request carries an `idempotencyKey`. A replay
 returns the original result; the same key with a different payload is rejected with
 `IDEMPOTENCY_CONFLICT`. This is the same discipline as payment webhooks, applied at the ledger.
 
+**Event-sourced, write-ahead, deterministic.** A mutation is planned (validated without
+touching state), appended to the journal, then applied. Transaction ids derive from the
+signed request and token ids from (transaction, position), so replaying the journal rebuilds
+the same tokens, the same entries and the same chain head. Mutations run one at a time
+through a serialised commit path; a test races two transfers spending the same token and
+checks that exactly one settles.
+
 **Programmable money semantics.** Rules are attached by the disbursing scheme wallet and
 cannot be re-attached, relaxed or mixed by anyone else (`RULES_NOT_ALLOWED`, `MIXED_RULES`).
 A spend to a qualifying merchant releases the rules on the merchant's tokens, matching the
 pilot design where the dealer ends up with ordinary e₹. Change stays bound. Expiry is enforced
-at spend time and cleaned up by `sweepExpired`, which returns value to the scheme.
+at spend time and cleaned up by `sweepExpired`, which returns value to the scheme. The Go
+chaincode enforces the same semantics on Fabric.
 
 **Offline: detect and sanction, not prevent.** A payer's device signs vouchers with a
 monotonic counter and a hash link to the previous one; the payee verifies the signature offline
@@ -124,25 +160,36 @@ signature, escrow and counter uniqueness. A cloned device produces two vouchers 
 counter; the second one to sync is rejected as `DOUBLE_SPEND` and the payer is frozen at both
 the bank and the core. Received offline value is not re-spendable offline, which keeps the
 model simple and bounded. Real deployments put the counter and key in a secure element to
-prevent cloning in the first place; this sandbox deliberately shows what the bank tier must do
-when that fails.
+prevent cloning in the first place; the C++ module is that element in software, and its
+`clone()` path exists precisely so the tests can play the attacker.
 
 **What the property tests cover.** `test/property.test.ts` runs random interleavings of loads,
 P2P payments, prefunds, vouchers, syncs and clone attacks across six wallets at two banks, and
 asserts after every step that conservation holds and the hash chain verifies, and at the end
 that every clone attack settled at most one voucher and flagged the other.
 
+## Repository map
+
+```
+src/            TypeScript core: ledger, journal, bank tier, rules, offline, UPI, HTTP servers
+native/         C++17 secure element (TweetNaCl Ed25519, SHA-256, minimal JSON) + CLI + tests
+chaincode/      Hyperledger Fabric chaincode in Go with mock-stub tests
+test/           vitest suites incl. fast-check properties and the C++ interop contract
+docs/           glossary
+```
+
 ## Limitations, stated plainly
 
-- In-memory state. There is no database; the point is the rules and the invariants. Persistence
-  is a `CoreLedger` storage adapter away, and the hash chain is designed to survive it.
-- Single-operator core. The log is tamper-evident, not distributed. RBI's production core is
-  reported to be a permissioned DLT (Hyperledger Fabric); the token model here maps directly to
-  Fabric's `token-utxo` sample chaincode if you want that backend.
+- Single-operator core. The TypeScript ledger's log is tamper-evident, not distributed; the
+  Fabric chaincode shows the distributed version of the token logic but is tested against a
+  mock stub here, not a running network (that needs Docker).
 - Custodial keys and a sandbox "RBI desk" (`/admin/*`) so one person can drive the whole
   system. Neither belongs in production.
-- Offline transfers are simulated as objects passed between `OfflineWallet` instances. The
-  radio layer (BLE, NFC) is out of scope.
+- The secure element is software. It models the interface and the counter discipline; a real
+  one is a tamper-resistant chip, which is the only thing that turns detection into prevention.
+- Offline transfers are simulated as objects passed between devices. The radio layer (BLE,
+  NFC) is out of scope.
+- `UTXOsOf` in the chaincode scans all tokens; a production contract keeps an owner index.
 - KYC tiers, limits, MCCs and the subsidy scheme are illustrative numbers, not RBI's.
 
 ## References
@@ -154,6 +201,7 @@ that every clone attack settled at most one voucher and flagged the other.
 - MIT DCI and Boston Fed, Project Hamilton / OpenCBDC-tx: UTXO transaction processing for a
   hypothetical CBDC.
 - Hyperledger Fabric `fabric-samples/token-utxo`: UTXO token chaincode.
+- TweetNaCl (Bernstein et al.), the Ed25519 implementation vendored in the secure element.
 
 ## License
 

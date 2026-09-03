@@ -34,6 +34,13 @@ jobs:
           cmake -S native/secure-element -B native/secure-element/build -DCMAKE_BUILD_TYPE=Release
           cmake --build native/secure-element/build
           ctest --test-dir native/secure-element/build --output-on-failure
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: chaincode/erupee-utxo/go.mod
+          cache-dependency-path: chaincode/erupee-utxo/go.sum
+      - name: Test the Hyperledger Fabric chaincode (Go)
+        working-directory: chaincode/erupee-utxo
+        run: go vet ./... && go test ./... -count=1
       - run: npm run typecheck
       - run: npm test
       - run: npm run demo
