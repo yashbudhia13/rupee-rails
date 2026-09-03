@@ -42,30 +42,30 @@ exactly where it stops. New to the vocabulary? Start with [docs/glossary.md](doc
 
 ```mermaid
 flowchart LR
-  subgraph tier1 [Tier 1: central bank]
-    L[CoreLedger<br/>UTXO tokens, mint/issue/burn,<br/>hash-chained log, idempotency,<br/>rules enforcement, directory]
-    J[(Journal<br/>SQLite / PostgreSQL)]
-    L -- write-ahead --> J
-    J -- replay on open --> L
+  subgraph tier1 ["Tier 1: central bank"]
+    L["CoreLedger<br/>UTXO tokens, mint/issue/burn,<br/>hash-chained log, idempotency,<br/>rules enforcement, directory"]
+    J[("Journal<br/>SQLite / PostgreSQL")]
+    L -- "write-ahead" --> J
+    J -- "replay on open" --> L
   end
-  subgraph tier2a [Tier 2: bank-a]
-    A[BankTier<br/>wallets, KYC caps,<br/>load/unload, P2P/P2M,<br/>disburse, voucher settlement]
+  subgraph tier2a ["Tier 2: bank-a"]
+    A["BankTier<br/>wallets, KYC caps,<br/>load/unload, P2P/P2M,<br/>disburse, voucher settlement"]
   end
-  subgraph tier2b [Tier 2: bank-b]
-    B[BankTier]
+  subgraph tier2b ["Tier 2: bank-b"]
+    B["BankTier"]
   end
-  subgraph devices [Devices]
-    D1[Secure element (C++)<br/>key + monotonic counter<br/>signs vouchers]
-    D2[OfflineWallet (TS)]
+  subgraph devices ["Devices"]
+    D1["Secure element, C++<br/>key + monotonic counter<br/>signs vouchers"]
+    D2["OfflineWallet, TypeScript"]
   end
-  subgraph fabric [Alternative core]
-    C[erupee-utxo chaincode (Go)<br/>same rules on Hyperledger Fabric]
+  subgraph fabric ["Alternative core"]
+    C["erupee-utxo chaincode, Go<br/>same rules on Hyperledger Fabric"]
   end
-  A -- CoreClient (in-process or HTTP) --> L
-  B -- CoreClient --> L
-  D1 -. voucher over BLE/NFC .-> D2
-  D2 -- sync --> B
-  A <-. UPI QR .-> B
+  A -- "CoreClient, in-process or HTTP" --> L
+  B -- "CoreClient" --> L
+  D1 -. "voucher over BLE or NFC" .-> D2
+  D2 -- "sync" --> B
+  A -. "UPI QR" .- B
 ```
 
 | e₹ concept | Where it lives | What it does here |
