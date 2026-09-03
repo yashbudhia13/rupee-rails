@@ -97,8 +97,8 @@ type mockCtx struct {
 	id   *mockIdentity
 }
 
-func (c *mockCtx) GetStub() shim.ChaincodeStubInterface { return c.stub }
-func (c *mockCtx) GetClientIdentity() cid.ClientIdentity  { return c.id }
+func (c *mockCtx) GetStub() shim.ChaincodeStubInterface  { return c.stub }
+func (c *mockCtx) GetClientIdentity() cid.ClientIdentity { return c.id }
 
 // as returns a context for the same world state acting as a different caller in a new transaction.
 func (c *mockCtx) as(id, msp, txID string) *mockCtx {
