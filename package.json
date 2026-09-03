@@ -1,0 +1,30 @@
+{
+  "name": "rupee-rails",
+  "version": "0.1.0",
+  "description": "Two-tier retail CBDC (e₹) sandbox: UTXO core ledger, bank wallet tier, programmable money, offline vouchers with double-spend detection.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Yash Budhia",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "demo": "tsx src/sim/demo.ts",
+    "dev:core": "tsx src/api/core-server.ts",
+    "dev:bank": "tsx src/api/bank-server.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "fastify": "^5.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "fast-check": "^3.23.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
