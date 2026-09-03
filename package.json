@@ -14,7 +14,9 @@
     "dev:bank": "tsx src/api/bank-server.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc",
+    "build:native": "bash native/secure-element/build.sh",
+    "test:native": "bash -c 'native/secure-element/build/se_tests || native/secure-element/build/se_tests.exe'"
   },
   "dependencies": {
     "fastify": "^5.0.0",

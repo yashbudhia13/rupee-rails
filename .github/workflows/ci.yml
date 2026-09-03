@@ -15,6 +15,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Build and test the C++ secure element
+        run: |
+          cmake -S native/secure-element -B native/secure-element/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build native/secure-element/build
+          ctest --test-dir native/secure-element/build --output-on-failure
       - run: npm run typecheck
       - run: npm test
       - run: npm run demo
