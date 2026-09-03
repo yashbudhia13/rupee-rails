@@ -94,9 +94,8 @@ describe("random interleavings", () => {
               break;
             case "prefund":
               await tolerate(async () => {
-                const r = await banks[c.who]!.prefundOffline(ids[c.who]!, c.amount, `prefund-${step}`);
+                await banks[c.who]!.prefundOffline(ids[c.who]!, c.amount, `prefund-${step}`);
                 devices[c.who]!.fund(c.amount);
-                void r;
               });
               break;
             case "voucher":

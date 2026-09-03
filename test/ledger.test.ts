@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { generateKeyPair } from "../src/crypto.js";
 import { CoreLedger } from "../src/ledger.js";
 import { DENOMINATIONS_PAISE, rupees, sum } from "../src/money.js";
-import { expectInvariant, makeClock, rbiSigner, rejects, signedTransfer } from "./helpers.js";
+import { expectInvariant, makeClock, rbiSigner, signedTransfer } from "./helpers.js";
 
 function setup() {
   const clock = makeClock();
@@ -155,6 +155,3 @@ function await_(run: () => unknown): { code: string; message: string; details?: 
   }
   throw new Error("expected a rejection");
 }
-
-// keep the async helper referenced so the shared module is exercised by this file too
-void rejects;
