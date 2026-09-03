@@ -8,6 +8,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { generateKeyPair, signCanonical, type KeyPair } from "../crypto.js";
+import { openJournal, type Journal } from "../journal.js";
 import { CoreLedger, LedgerError, signingPayload } from "../ledger.js";
 import { MoneyError } from "../money.js";
 
@@ -49,9 +50,9 @@ export interface CoreServer {
   rbi: KeyPair;
 }
 
-export function buildCoreServer(opts: { ledger?: CoreLedger; rbi?: KeyPair; adminToken?: string } = {}): CoreServer {
+export async function buildCoreServer(opts: { ledger?: CoreLedger; rbi?: KeyPair; adminToken?: string; journal?: Journal } = {}): Promise<CoreServer> {
   const rbi = opts.rbi ?? generateKeyPair();
-  const ledger = opts.ledger ?? new CoreLedger(rbi.publicKey);
+  const ledger = opts.ledger ?? (opts.journal ? await CoreLedger.open(rbi.publicKey, opts.journal) : new CoreLedger(rbi.publicKey));
   const app = Fastify({ logger: false });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -71,12 +72,12 @@ export function buildCoreServer(opts: { ledger?: CoreLedger; rbi?: KeyPair; admi
 
   app.post("/banks", async (req, reply) => {
     const body = z.object({ bankId: z.string().min(1), poolPublicKey: z.string().regex(/^[0-9a-f]{64}$/), openingReserve: z.number().int().nonnegative() }).parse(req.body);
-    ledger.registerBank(body.bankId, body.poolPublicKey, body.openingReserve);
+    await ledger.registerBank(body.bankId, body.poolPublicKey, body.openingReserve);
     return reply.status(201).send({ ok: true });
   });
   app.get<{ Params: { bankId: string } }>("/banks/:bankId/reserve", async (req) => ({ reserve: ledger.reserveOf(req.params.bankId) }));
 
-  app.post("/wallets", async (req, reply) => reply.status(201).send(ledger.registerWallet(walletRecord.parse(req.body))));
+  app.post("/wallets", async (req, reply) => reply.status(201).send(await ledger.registerWallet(walletRecord.parse(req.body))));
   app.get<{ Params: { walletId: string } }>("/wallets/:walletId", async (req) => ({ wallet: ledger.lookupWallet(req.params.walletId) ?? null }));
   app.post<{ Params: { walletId: string } }>("/wallets/:walletId/frozen", async (req) => {
     const body = z.object({ frozen: z.boolean() }).parse(req.body);
@@ -143,9 +144,14 @@ function statusFor(code: LedgerError["code"]): number {
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 4000);
-  const { app, rbi } = buildCoreServer({ adminToken: process.env.ADMIN_TOKEN });
+  // LEDGER_JOURNAL: a SQLite file path, or a postgres:// URL. Unset means in-memory.
+  const target = process.env.LEDGER_JOURNAL;
+  const journal = target ? await openJournal(target) : undefined;
+  const { app, rbi, ledger } = await buildCoreServer({ adminToken: process.env.ADMIN_TOKEN, journal });
   await app.listen({ port, host: "0.0.0.0" });
-  console.log(`rupee-rails core ledger on http://127.0.0.1:${port}  (RBI key ${rbi.publicKey.slice(0, 12)}…)`);
+  console.log(
+    `rupee-rails core ledger on http://127.0.0.1:${port}  (RBI key ${rbi.publicKey.slice(0, 12)}…, journal ${target ?? "memory"}, ${ledger.journaledEvents} events replayed)`,
+  );
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

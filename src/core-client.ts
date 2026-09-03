@@ -38,7 +38,7 @@ export interface CoreClient {
 export class InProcessCoreClient implements CoreClient {
   constructor(readonly ledger: CoreLedger) {}
   async registerBank(bankId: string, poolPublicKey: string, openingReserve: number) {
-    this.ledger.registerBank(bankId, poolPublicKey, openingReserve);
+    return this.ledger.registerBank(bankId, poolPublicKey, openingReserve);
   }
   async registerWallet(record: WalletRecord) {
     return this.ledger.registerWallet(record);

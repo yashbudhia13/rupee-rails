@@ -1,6 +1,7 @@
 import { BankTier } from "../src/bank.js";
 import { InProcessCoreClient } from "../src/core-client.js";
 import { generateKeyPair, signCanonical, type KeyPair } from "../src/crypto.js";
+import type { Journal } from "../src/journal.js";
 import { CoreLedger, signingPayload, type Output, type Token, type TransferRequest } from "../src/ledger.js";
 import { rupees } from "../src/money.js";
 
@@ -48,17 +49,17 @@ export interface World {
 }
 
 /** Central bank plus two banks, each holding `float` of e₹ against reserves. */
-export async function makeWorld(float = rupees(1_000_000)): Promise<World> {
+export async function makeWorld(float = rupees(1_000_000), journal?: Journal): Promise<World> {
   const clock = makeClock();
   const rbi = generateKeyPair();
-  const ledger = new CoreLedger(rbi.publicKey, () => clock.now);
+  const ledger = new CoreLedger(rbi.publicKey, { clock: () => clock.now, ...(journal ? { journal } : {}) });
   const core = new InProcessCoreClient(ledger);
   const sign = rbiSigner(rbi);
   const bankA = await BankTier.create("bank-a", core, { clock: () => clock.now, openingReserve: float * 10 });
   const bankB = await BankTier.create("bank-b", core, { clock: () => clock.now, openingReserve: float * 10 });
-  ledger.mint(sign("mint", { amount: float * 2, idempotencyKey: "mint-0", signature: "" }));
-  ledger.issue(sign("issue", { bankId: "bank-a", amount: float, idempotencyKey: "issue-a", signature: "" }));
-  ledger.issue(sign("issue", { bankId: "bank-b", amount: float, idempotencyKey: "issue-b", signature: "" }));
+  await ledger.mint(sign("mint", { amount: float * 2, idempotencyKey: "mint-0", signature: "" }));
+  await ledger.issue(sign("issue", { bankId: "bank-a", amount: float, idempotencyKey: "issue-a", signature: "" }));
+  await ledger.issue(sign("issue", { bankId: "bank-b", amount: float, idempotencyKey: "issue-b", signature: "" }));
   return { rbi, ledger, core, bankA, bankB, clock, sign };
 }
 

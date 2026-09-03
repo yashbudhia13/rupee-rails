@@ -11,9 +11,13 @@
  *
  * The conservation invariant is checked after every step.
  */
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { BankTier, type Wallet } from "../bank.js";
 import { InProcessCoreClient } from "../core-client.js";
 import { generateKeyPair, signCanonical } from "../crypto.js";
+import { SqliteJournal } from "../journal.js";
 import { CoreLedger, LedgerError, signingPayload } from "../ledger.js";
 import { formatInr, rupees } from "../money.js";
 import { OfflineWallet } from "../offline.js";
@@ -45,7 +49,9 @@ async function expectRejection(label: string, run: () => Promise<unknown>): Prom
 
 async function main(): Promise<void> {
   const rbi = generateKeyPair();
-  const ledger = new CoreLedger(rbi.publicKey, clock);
+  const journalFile = path.join(tmpdir(), `rupee-rails-demo-${process.pid}.sqlite`);
+  const journal = new SqliteJournal(journalFile);
+  const ledger = new CoreLedger(rbi.publicKey, { clock, journal });
   const core = new InProcessCoreClient(ledger);
   const check = (label: string) => {
     const inv = ledger.invariants();
@@ -57,9 +63,9 @@ async function main(): Promise<void> {
   // 1. Central bank and two banks
   const bankA = await BankTier.create("bank-a", core, { clock, openingReserve: rupees(10_000_000) });
   const bankB = await BankTier.create("bank-b", core, { clock, openingReserve: rupees(10_000_000) });
-  ledger.mint(rbiSign("mint", { amount: rupees(2_000_000), idempotencyKey: "mint-1", signature: "" }));
-  ledger.issue(rbiSign("issue", { bankId: "bank-a", amount: rupees(1_000_000), idempotencyKey: "issue-a", signature: "" }));
-  ledger.issue(rbiSign("issue", { bankId: "bank-b", amount: rupees(1_000_000), idempotencyKey: "issue-b", signature: "" }));
+  await ledger.mint(rbiSign("mint", { amount: rupees(2_000_000), idempotencyKey: "mint-1", signature: "" }));
+  await ledger.issue(rbiSign("issue", { bankId: "bank-a", amount: rupees(1_000_000), idempotencyKey: "issue-a", signature: "" }));
+  await ledger.issue(rbiSign("issue", { bankId: "bank-b", amount: rupees(1_000_000), idempotencyKey: "issue-b", signature: "" }));
   log(
     "RBI mints ₹20,00,000 and issues ₹10,00,000 to each bank against reserves",
     `bank-a reserve now ${formatInr(ledger.reserveOf("bank-a"))}, pool ${formatInr(ledger.balanceOf(bankA.poolPublicKey))}`,
@@ -142,7 +148,7 @@ async function main(): Promise<void> {
   );
 
   advanceDays(91);
-  const swept = ledger.sweepExpired();
+  const swept = await ledger.sweepExpired();
   log(
     "91 days later the unspent subsidy expires and is swept back to the scheme",
     `swept ${swept.swept.length} tokens worth ${formatInr(swept.swept.reduce((a, t) => a + t.amount, 0))}; scheme balance ${formatInr((await bankA.balance(scheme.id)).available)}`,
@@ -186,6 +192,20 @@ async function main(): Promise<void> {
 
   const frozenPay = await expectRejection("frozen wallet paying P2P", () => bankB.payP2P({ from: ravi.id, to: asha.id, amount: rupees(50), requestId: "p2p-frozen" }));
   log("The core also refuses the frozen wallet", frozenPay);
+
+  // 6. Persistence: rebuild the ledger from its journal and compare.
+  await journal.close();
+  const reopenedJournal = new SqliteJournal(journalFile);
+  const reopened = await CoreLedger.open(rbi.publicKey, reopenedJournal, { clock });
+  const head = ledger.entriesList().at(-1)!.hash;
+  const reopenedHead = reopened.entriesList().at(-1)!.hash;
+  log(
+    "Reopened the ledger from its SQLite journal",
+    `${reopened.journaledEvents} events replayed into ${reopened.invariants().entries} entries; chain head ${reopenedHead.slice(0, 16)}… ${reopenedHead === head ? "matches" : "DOES NOT MATCH"} the live ledger`,
+    `Ravi still frozen after replay: ${reopened.lookupWallet(ravi.id)?.frozen}; dealer balance ${formatInr(reopened.balanceOf(dealer.publicKey))} both before and after`,
+  );
+  await reopenedJournal.close();
+  for (const f of [journalFile, `${journalFile}-wal`, `${journalFile}-shm`]) rmSync(f, { force: true });
 
   const inv = ledger.invariants();
   const auditA = bankA.auditLog();

@@ -108,12 +108,12 @@ describe("purpose-bound tokens on the ledger", () => {
       bankA.payQr({ from: farmer.id, qr: buildUpiQr({ vpa: "kisan@bank-a", mcc: "0763" }), amount: rupees(100), purpose: "FERT-SUBSIDY-2026", location: belagavi, requestId: "late" }),
     );
     expect(expired.details?.violation).toBe("EXPIRED");
-    const swept = ledger.sweepExpired();
+    const swept = await ledger.sweepExpired();
     expect(swept.swept.reduce((a, t) => a + t.amount, 0)).toBe(rupees(2_000));
     const after = await bankA.balance(schemeWallet.id);
     expect(after.available - before.available).toBe(rupees(2_000));
     expect((await bankA.balance(farmer.id)).byPurpose).toEqual({});
     expectInvariant(ledger);
-    expect(ledger.sweepExpired().swept).toHaveLength(0);
+    expect((await ledger.sweepExpired()).swept).toHaveLength(0);
   });
 });

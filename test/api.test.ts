@@ -10,7 +10,7 @@ describe("core and bank over HTTP", () => {
   let baseUrl: string;
 
   beforeAll(async () => {
-    core = buildCoreServer({ adminToken: "secret" });
+    core = await buildCoreServer({ adminToken: "secret" });
     baseUrl = await core.app.listen({ port: 0, host: "127.0.0.1" });
   });
   afterAll(async () => {
